@@ -2041,12 +2041,11 @@ if (DEMO) {
 /* ---------- Main loop ---------- */
 
 // Idle pets fade out and dispose so the stage stays clean.
-// Linear 10% per minute → fully gone at 10:00 (per chat: "every minute they
-// should get like 10% faded and then be fully removed after 10 minutes").
-// The dissolve filter only kicks in for the last couple of minutes so the
-// disappearance reads as a snap, not a slow ghosting.
-const IDLE_DEATH_MS       = 10 * 60 * 1000;       // disposed at 10 min
-const IDLE_DISSOLVE_AT_MS = 8 * 60 * 1000;        // turbulence joins in at 8 min
+// Streamer follow-up: "prioritize fading out users, as the area is getting
+// very crowded" — halved the lifetime from 10 min to 5 min so the
+// disappearance is something you can actually watch happen on stream.
+const IDLE_DEATH_MS       = 5 * 60 * 1000;        // disposed at 5 min
+const IDLE_DISSOLVE_AT_MS = 4 * 60 * 1000;        // turbulence joins in at 4 min
 
 let last = performance.now();
 function frame(now) {
