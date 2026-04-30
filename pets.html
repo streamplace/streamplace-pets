@@ -350,6 +350,20 @@
     100% { transform: rotate(360deg); }
   }
 
+  /* "blur" / "unblur" — chat-triggered scene-wide blur. CSS blur is
+     cheaper than a real downscale-and-upscale pixelation pass and reads
+     fine on stream. Covers the stage and every fx-* overlay; leaves
+     status/version/toast labels untouched. */
+  body.fx-blur #stage,
+  body.fx-blur .fx-rain,
+  body.fx-blur .fx-snow,
+  body.fx-blur .fx-confetti,
+  body.fx-blur .fx-hearts,
+  body.fx-blur .fx-party {
+    filter: blur(8px) contrast(1.2) saturate(1.2);
+    transition: filter 0.4s ease;
+  }
+
   /* !quake — shakes the stage */
   .fx-quake { animation: quake 0.55s linear; }
   @keyframes quake {
@@ -1705,7 +1719,7 @@ async function handleChatMessage(authorDid, record) {
   }
   const ALL_COMMAND_RE = /(!party|!snow|!rain|!confetti|!hearts?|!(?:quake|earthquake|shake)|!shrink(?:ray)?|!grow(?:ray)?|barrel\s*roll)\b/i;
   const looksLikeCommand = ALL_COMMAND_RE.test(text)
-    || /\b(left|right|up|down|fast|faster|slow|slower|jump|dance|fart|wide|narrow|tall|short|stretch|hop|bulge|bulgy|fisheye|unbulge|flatten|debulge|unfish)/i.test(text)
+    || /\b(left|right|up|down|fast|faster|slow|slower|jump|dance|fart|wide|narrow|tall|short|stretch|hop|bulge|bulgy|fisheye|unbulge|flatten|debulge|unfish|blur|unblur)/i.test(text)
     || /\b(links|rechts|hoch|runter|größer|grösser|kleiner|schneller|langsamer|spring|tanz|scheet|scheten|furz|breit|schmal|kurz|lang)/i.test(text)
     || /\b(omhoog|omlaag|sneller|langzamer|dans|dansen|wijd|smal|hoger|laag|lager|breed)/i.test(text)
     || /(⬅️|➡️|⬆️|⬇️|🔼|🔽|⏩|⏪|🦘|💃|🕺|💨)/.test(text);
@@ -1750,6 +1764,8 @@ async function handleChatMessage(authorDid, record) {
   if (/!confetti\b/i.test(text))                 { triggerConfetti(); bangFired = true; }
   if (/!hearts?\b/i.test(text))                  { triggerHearts();   bangFired = true; }
   if (/!(quake|earthquake|shake)\b/i.test(text)) { triggerQuake();    bangFired = true; }
+  if (/\bblur\b/i.test(text))   { document.body.classList.add('fx-blur');    bangFired = true; }
+  if (/\bunblur\b/i.test(text)) { document.body.classList.remove('fx-blur'); bangFired = true; }
   if (/\bbarrel\s*roll\b/i.test(text)) { triggerBarrelRoll(authorDid); bangFired = true; }
 
   // Tokenize: split on whitespace, strip ASCII edge-punctuation, leave letters/digits/emoji intact.
