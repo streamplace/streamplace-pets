@@ -2068,7 +2068,18 @@ function scheduleReconnect() {
 // Build version: bumped each commit so chat can see new code arrived.
 const BUILD_VERSION = 'v0.8.0';
 const BUILD_DATE = '2026-04-30';
-document.getElementById('version').textContent = `pets ${BUILD_VERSION} · ${BUILD_DATE}`;
+const versionEl = document.getElementById('version');
+if (STREAMER_DID) {
+  versionEl.textContent = `pets ${BUILD_VERSION} · ${BUILD_DATE}`;
+} else {
+  // Visible warning so the streamer notices the filter is off — without a
+  // ?streamer=did:... URL param, every chat from every stream lands on stage.
+  versionEl.textContent = `pets ${BUILD_VERSION} · NO STREAMER FILTER — add ?streamer=did:... to the URL`;
+  versionEl.style.color = 'rgba(255, 180, 80, 0.95)';
+  versionEl.style.background = 'rgba(0, 0, 0, 0.55)';
+  versionEl.style.padding = '2px 6px';
+  versionEl.style.borderRadius = '4px';
+}
 
 // "Reloaded" toast — pops up briefly when the page (re)loads.
 {
