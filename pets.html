@@ -1265,26 +1265,27 @@ async function fetchSprite(pds, did) {
   const imageUrl = `${pds.replace(/\/$/, '')}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${cid}`;
   let img;
   try { img = await loadImage(imageUrl); } catch { return null; }
-  const rows = Math.max(1, Number(rec.rows) || 1);
-  const columns = Math.max(1, Number(rec.columns) || 1);
-  // Sanity-check: declared layout must fit inside the actual image. If not
-  // (e.g. wrong frameWidth/frameHeight in the upload), refuse the sprite so the
-  // user gets a visible SVG fallback instead of an invisible/broken pet.
-  if (img.naturalWidth < fw || img.naturalHeight < fh
-      || img.naturalWidth < fw * columns - 1
-      || img.naturalHeight < fh * rows - 1) {
-    console.warn('[pets] sprite layout exceeds image bounds; falling back to SVG', did,
-                 { fw, fh, rows, columns, imgW: img.naturalWidth, imgH: img.naturalHeight });
+  // The image must hold at least one frame; otherwise the sprite is unusable.
+  if (img.naturalWidth < fw || img.naturalHeight < fh) {
+    console.warn('[pets] sprite frame larger than image; falling back to SVG', did);
     return null;
   }
+  // Clamp declared rows/columns to what physically fits in the image. If
+  // someone uploads rows=4 but only 3 rows actually fit, we render 3 rows
+  // instead of refusing the whole sprite — the previous strict check was
+  // rejecting otherwise-fine sprites whose dims were a few pixels off.
+  const maxRows = Math.max(1, Math.floor(img.naturalHeight / fh));
+  const maxCols = Math.max(1, Math.floor(img.naturalWidth / fw));
+  const rows = Math.min(Math.max(1, Number(rec.rows) || 1), maxRows);
+  const columns = Math.min(Math.max(1, Number(rec.columns) || 1), maxCols);
   return {
     imageUrl,
     rows,
     columns,
     frameWidth: fw,
     frameHeight: fh,
-    width: Number(rec.width) || (fw * columns),
-    height: Number(rec.height) || (fh * rows),
+    width: fw * columns,
+    height: fh * rows,
   };
 }
 
