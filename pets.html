@@ -350,19 +350,9 @@
     100% { transform: rotate(360deg); }
   }
 
-  /* "blur" / "unblur" — chat-triggered scene-wide blur. CSS blur is
-     cheaper than a real downscale-and-upscale pixelation pass and reads
-     fine on stream. Covers the stage and every fx-* overlay; leaves
-     status/version/toast labels untouched. */
-  body.fx-blur #stage,
-  body.fx-blur .fx-rain,
-  body.fx-blur .fx-snow,
-  body.fx-blur .fx-confetti,
-  body.fx-blur .fx-hearts,
-  body.fx-blur .fx-party {
-    filter: blur(8px) contrast(1.2) saturate(1.2);
-    transition: filter 0.4s ease;
-  }
+  /* Per-pet blur — each `blur` chat token adds a step (≈2px), `unblur`
+     clears. Combined with the bulge filter via the JS visual-filter helper. */
+  .pet .pet-flip { transition: filter 0.25s ease; }
 
   /* !quake — shakes the stage */
   .fx-quake { animation: quake 0.55s linear; }
@@ -872,6 +862,7 @@ class Pet {
     this.stretchX = 1;
     this.stretchY = 1;
     this.bulgeLevel = 0;
+    this.blurLevel = 0;
     this.filterId = (Math.random().toString(36).slice(2, 10));
 
     stage.appendChild(this.el);
@@ -984,6 +975,7 @@ class Pet {
     this.stretchY = 1;
     this.el.style.setProperty('--anim-speed', 1);
     this.setBulgeLevel(0);
+    this.setBlurLevel(0);
     this.lastMessage = performance.now();
     this.applyTransform();
     saveStateDebounced();
@@ -997,43 +989,59 @@ class Pet {
     const defs = document.querySelector('#filter-defs defs');
     let filter = document.getElementById(filterId);
     if (this.bulgeLevel <= 0) {
-      this.flipEl.style.filter = '';
       if (filter) filter.remove();
-      this.lastMessage = performance.now();
-      saveStateDebounced();
-      return;
+    } else {
+      const NS = 'http://www.w3.org/2000/svg';
+      if (!filter) {
+        filter = document.createElementNS(NS, 'filter');
+        filter.id = filterId;
+        filter.setAttribute('x', '-30%');
+        filter.setAttribute('y', '-30%');
+        filter.setAttribute('width', '160%');
+        filter.setAttribute('height', '160%');
+        filter.setAttribute('color-interpolation-filters', 'sRGB');
+        const feImage = document.createElementNS(NS, 'feImage');
+        feImage.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', getBulgeDisplacementMap());
+        feImage.setAttribute('href', getBulgeDisplacementMap());
+        feImage.setAttribute('result', 'map');
+        feImage.setAttribute('preserveAspectRatio', 'none');
+        feImage.setAttribute('width', '100%');
+        feImage.setAttribute('height', '100%');
+        filter.appendChild(feImage);
+        const disp = document.createElementNS(NS, 'feDisplacementMap');
+        disp.setAttribute('in', 'SourceGraphic');
+        disp.setAttribute('in2', 'map');
+        disp.setAttribute('xChannelSelector', 'R');
+        disp.setAttribute('yChannelSelector', 'G');
+        filter.appendChild(disp);
+        defs.appendChild(filter);
+      }
+      // Each level = a noticeable but bounded distortion.
+      const disp = filter.querySelector('feDisplacementMap');
+      disp.setAttribute('scale', String(this.bulgeLevel * 14));
     }
-    const NS = 'http://www.w3.org/2000/svg';
-    if (!filter) {
-      filter = document.createElementNS(NS, 'filter');
-      filter.id = filterId;
-      filter.setAttribute('x', '-30%');
-      filter.setAttribute('y', '-30%');
-      filter.setAttribute('width', '160%');
-      filter.setAttribute('height', '160%');
-      filter.setAttribute('color-interpolation-filters', 'sRGB');
-      const feImage = document.createElementNS(NS, 'feImage');
-      feImage.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', getBulgeDisplacementMap());
-      feImage.setAttribute('href', getBulgeDisplacementMap());
-      feImage.setAttribute('result', 'map');
-      feImage.setAttribute('preserveAspectRatio', 'none');
-      feImage.setAttribute('width', '100%');
-      feImage.setAttribute('height', '100%');
-      filter.appendChild(feImage);
-      const disp = document.createElementNS(NS, 'feDisplacementMap');
-      disp.setAttribute('in', 'SourceGraphic');
-      disp.setAttribute('in2', 'map');
-      disp.setAttribute('xChannelSelector', 'R');
-      disp.setAttribute('yChannelSelector', 'G');
-      filter.appendChild(disp);
-      defs.appendChild(filter);
-    }
-    // Each level = a noticeable but bounded distortion.
-    const disp = filter.querySelector('feDisplacementMap');
-    disp.setAttribute('scale', String(this.bulgeLevel * 14));
-    this.flipEl.style.filter = `url(#${filterId})`;
+    this._applyVisualFilters();
     this.lastMessage = performance.now();
     saveStateDebounced();
+  }
+
+  // Per-pet blur — `blur`/`blurx5` add ≈2px steps; `unblur` clears.
+  setBlurLevel(level) {
+    this.blurLevel = clamp(level, LIMITS.blurLevel);
+    this._applyVisualFilters();
+    this.lastMessage = performance.now();
+    saveStateDebounced();
+  }
+
+  // Combine bulge (SVG filter) and blur (CSS function) into the single
+  // filter chain on flipEl. Order matters: bulge first warps the source,
+  // then blur softens — feels more like an out-of-focus bulge than a
+  // bulge-of-blur.
+  _applyVisualFilters() {
+    const parts = [];
+    if (this.bulgeLevel > 0) parts.push(`url(#bulge-${this.filterId})`);
+    if (this.blurLevel > 0)  parts.push(`blur(${this.blurLevel * 2}px)`);
+    this.flipEl.style.filter = parts.join(' ');
   }
 
   // Conservation mode: total visible area (depthScale^2 * stretchX * stretchY) stays ≈1.
@@ -1513,6 +1521,7 @@ function saveState() {
         stretchY: pet.stretchY,
         speedMul: pet.speedMul,
         bulgeLevel: pet.bulgeLevel,
+        blurLevel: pet.blurLevel,
         typeOverride: petTypeOverrides.get(did) || null,
         lastMessageWall: wallNow - (nowPerf - pet.lastMessage),
         sprite: pet.mode === 'sprite' ? pet.sprite : null,
@@ -1548,6 +1557,7 @@ function restoreState() {
       pet.speedMul = saved.speedMul || 1;
       pet.el.style.setProperty('--anim-speed', pet.speedMul);
       if (saved.bulgeLevel) pet.setBulgeLevel(saved.bulgeLevel);
+      if (saved.blurLevel)  pet.setBlurLevel(saved.blurLevel);
       pet.applyTransform();
       pet.el.classList.remove('spawning');
       pets.set(saved.did, pet);
@@ -1661,6 +1671,8 @@ async function handleChatMessage(authorDid, record) {
     shorter:  new Set(['short', 'shorter', 'flach', 'flacher', 'kurz', 'kürzer', 'kort', 'korter', 'laag', 'lager']),
     bulge:    new Set(['bulge', 'bulgy', 'fisheye', 'fisch', 'bulle', 'bolle', 'bol']),
     unbulge:  new Set(['unbulge', 'debulge', 'flatten', 'unfish']),
+    blur:     new Set(['blur', 'blurry', 'unsharp', 'verschwommen', 'wazig']),
+    unblur:   new Set(['unblur', 'sharp', 'sharpen', 'focus', 'scharp', 'scherp']),
   };
 
   // Temporarily replace the handle pill with the redacted chat message
@@ -1691,6 +1703,7 @@ async function handleChatMessage(authorDid, record) {
     const oldSpeedMul = pet.speedMul, oldDepthScale = pet.depthScale;
     const oldStretchX = pet.stretchX, oldStretchY = pet.stretchY;
     const oldBulge = pet.bulgeLevel;
+    const oldBlur = pet.blurLevel;
     pet.dispose();
     pets.delete(authorDid);
     const profileNow = profileCache.get(authorDid) || profile;
@@ -1701,6 +1714,7 @@ async function handleChatMessage(authorDid, record) {
     pet.stretchX = oldStretchX; pet.stretchY = oldStretchY;
     pet.el.style.setProperty('--anim-speed', pet.speedMul);
     if (oldBulge) pet.setBulgeLevel(oldBulge);
+    if (oldBlur)  pet.setBlurLevel(oldBlur);
     pet.applyTransform();
     pets.set(authorDid, pet);
     saveStateDebounced();
@@ -1764,8 +1778,6 @@ async function handleChatMessage(authorDid, record) {
   if (/!confetti\b/i.test(text))                 { triggerConfetti(); bangFired = true; }
   if (/!hearts?\b/i.test(text))                  { triggerHearts();   bangFired = true; }
   if (/!(quake|earthquake|shake)\b/i.test(text)) { triggerQuake();    bangFired = true; }
-  if (/\bblur\b/i.test(text))   { document.body.classList.add('fx-blur');    bangFired = true; }
-  if (/\bunblur\b/i.test(text)) { document.body.classList.remove('fx-blur'); bangFired = true; }
   if (/\bbarrel\s*roll\b/i.test(text)) { triggerBarrelRoll(authorDid); bangFired = true; }
 
   // Tokenize: split on whitespace, strip ASCII edge-punctuation, leave letters/digits/emoji intact.
@@ -1819,6 +1831,8 @@ async function handleChatMessage(authorDid, record) {
   if (counts.shorter)  pet.setStretchY(pet.stretchY / Math.pow(1.25, counts.shorter));
   if (counts.bulge)    pet.setBulgeLevel(pet.bulgeLevel + counts.bulge);
   if (counts.unbulge)  pet.setBulgeLevel(0);
+  if (counts.blur)     pet.setBlurLevel(pet.blurLevel + counts.blur);
+  if (counts.unblur)   pet.setBlurLevel(0);
 
   // Catch-all: substring "fart" inside a sentence still fires once if no fart token matched.
   if (!counts.fart && (/\bfart/i.test(text) || text.includes('💨'))) {
@@ -1844,6 +1858,7 @@ const LIMITS = SAFE_LIMITS ? {
   stretchX:   [0.4,   3.5],
   stretchY:   [0.4,   3.5],
   bulgeLevel: [0,     8],
+  blurLevel:  [0,     6],
   xN: 10,
   jumpQueue: 5,
   fartQueue: 5,
@@ -1853,6 +1868,7 @@ const LIMITS = SAFE_LIMITS ? {
   stretchX:   [0.005, 80],
   stretchY:   [0.005, 80],
   bulgeLevel: [0,     30],
+  blurLevel:  [0,     20],
   xN: 100,
   jumpQueue: 50,
   fartQueue: 50,
