@@ -1952,9 +1952,13 @@ if (DEMO) {
 
 /* ---------- Main loop ---------- */
 
-// Idle pets fade out (Thanos-snap style) and dispose so the stage stays clean.
-const IDLE_FADE_START_MS = 4 * 60 * 1000;       // 4:00 → start fizzling softly
-const IDLE_DEATH_MS      = 5 * 60 * 1000;       // 5:00 → fully gone, disposed
+// Idle pets fade out and dispose so the stage stays clean.
+// Linear 10% per minute → fully gone at 10:00 (per chat: "every minute they
+// should get like 10% faded and then be fully removed after 10 minutes").
+// The dissolve filter only kicks in for the last couple of minutes so the
+// disappearance reads as a snap, not a slow ghosting.
+const IDLE_DEATH_MS       = 10 * 60 * 1000;       // disposed at 10 min
+const IDLE_DISSOLVE_AT_MS = 8 * 60 * 1000;        // turbulence joins in at 8 min
 
 let last = performance.now();
 function frame(now) {
@@ -1968,18 +1972,15 @@ function frame(now) {
       dead.push(did);
       continue;
     }
-    if (idle >= IDLE_FADE_START_MS) {
-      const t = (idle - IDLE_FADE_START_MS) / (IDLE_DEATH_MS - IDLE_FADE_START_MS); // 0..1
-      // Opacity fades smoothly, dissolve filter ramps up in the second half.
-      p.el.style.opacity = String(Math.max(0, 1 - t * t));
-      p.el.style.filter = t > 0.4
-        ? (t > 0.75 ? 'url(#dissolve)' : 'url(#dissolve-soft)')
-        : '';
-    } else if (p._wasFading) {
-      p.el.style.opacity = '';
+    const t = idle / IDLE_DEATH_MS; // 0..1
+    p.el.style.opacity = String(Math.max(0, 1 - t));
+    if (idle >= IDLE_DISSOLVE_AT_MS) {
+      const dt2 = (idle - IDLE_DISSOLVE_AT_MS) / (IDLE_DEATH_MS - IDLE_DISSOLVE_AT_MS); // 0..1
+      p.el.style.filter = dt2 > 0.5 ? 'url(#dissolve)' : 'url(#dissolve-soft)';
+    } else if (p._wasDissolving) {
       p.el.style.filter = '';
     }
-    p._wasFading = idle >= IDLE_FADE_START_MS;
+    p._wasDissolving = idle >= IDLE_DISSOLVE_AT_MS;
   }
   for (const did of dead) {
     pets.get(did).dispose();
