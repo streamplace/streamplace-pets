@@ -786,10 +786,16 @@ function pickPet(did, handle, sprite) {
   if (sprite) {
     return { mode: 'sprite', sprite, scale: 1.0, speed: 42 };
   }
-  const isGoose = (handle || '').toLowerCase().includes('goose');
-  if (isGoose) {
+  const lower = (handle || '').toLowerCase();
+  if (lower.includes('goose')) {
     const v = PET_VARIANTS.goose[0];
     return { mode: 'svg', type: 'goose', color: v.c, accent: v.a, ...PET_BASE.goose };
+  }
+  // Per chat (felinus.fish): handles containing "fish" become cats.
+  if (lower.includes('fish')) {
+    const h = hashString(did);
+    const v = PET_VARIANTS.cat[(h >> 5) % PET_VARIANTS.cat.length];
+    return { mode: 'svg', type: 'cat', color: v.c, accent: v.a, ...PET_BASE.cat };
   }
   const h = hashString(did);
   const type = RANDOM_TYPES[h % RANDOM_TYPES.length];
