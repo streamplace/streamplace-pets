@@ -35,6 +35,44 @@
   }
   #status.hidden { display: none; }
 
+  #version {
+    position: fixed;
+    bottom: 4px;
+    right: 8px;
+    font-size: 10px;
+    color: rgba(255,255,255,0.35);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    pointer-events: none;
+    text-shadow: 0 0 3px rgba(0,0,0,0.8);
+  }
+
+  #reload-toast {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-12px);
+    padding: 8px 18px;
+    background: rgba(20,20,28,0.85);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: 0.06em;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.18);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+    pointer-events: none;
+    opacity: 0;
+    z-index: 500;
+    animation: reload-toast 3.6s ease-out forwards;
+  }
+  @keyframes reload-toast {
+    0%   { opacity: 0; transform: translateX(-50%) translateY(-12px); }
+    8%   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    80%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  }
+
   .pet {
     position: absolute;
     bottom: 14px;
@@ -302,6 +340,16 @@
     100% { transform: translate(var(--sway, 0), -110vh) scale(var(--end-scale, 1.1)); opacity: 0; }
   }
 
+  /* !barrelroll — rotates the entire viewport once. Gated by badge ownership. */
+  .fx-barrelroll {
+    transform-origin: 50% 50%;
+    animation: barrelroll 1.4s cubic-bezier(.5,0,.5,1) forwards;
+  }
+  @keyframes barrelroll {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
   /* !quake — shakes the stage */
   .fx-quake { animation: quake 0.55s linear; }
   @keyframes quake {
@@ -400,6 +448,19 @@
 <body>
 <div id="stage"></div>
 <div id="status" class="hidden"></div>
+<div id="version"></div>
+<svg id="filter-defs" style="position:absolute;width:0;height:0" aria-hidden="true">
+  <defs>
+    <filter id="dissolve" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.6" numOctaves="2" seed="7" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="48" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="dissolve-soft" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="11" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="14" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+</svg>
 
 <script>
 /* ---------- SVG factories (fallback pets) ---------- */
@@ -653,7 +714,17 @@ function redactBadWords(s) {
   return s.replace(BAD_WORDS_RE, m => '*'.repeat(m.length));
 }
 
+// User-chosen pet type, takes precedence over both sprite and handle-based picks.
+// did → 'cat' | 'dog' | 'bunny' | 'duck' | 'hamster' | 'goose'
+const petTypeOverrides = new Map();
+
 function pickPet(did, handle, sprite) {
+  const override = petTypeOverrides.get(did);
+  if (override && PET_VARIANTS[override]) {
+    const h = hashString(did);
+    const v = PET_VARIANTS[override][(h >> 5) % PET_VARIANTS[override].length];
+    return { mode: 'svg', type: override, color: v.c, accent: v.a, ...PET_BASE[override] };
+  }
   if (sprite) {
     return { mode: 'sprite', sprite, scale: 1.0, speed: 42 };
   }
@@ -673,6 +744,42 @@ function pickPet(did, handle, sprite) {
 const SPRITE_DISPLAY_H = 96; // px tall when rendered
 const WALK_CYCLE = [1, 0, 1, 2];
 const WALK_FPS = 6;
+
+/* Lazy-build a radial displacement map for the bulge filter. R/G channels
+   encode (dx, dy) sample offsets — center → no shift, mid-radius → strongly
+   outward push (so center magnifies / edges compress = fisheye / bulge). */
+let _bulgeMapDataUrl = null;
+function getBulgeDisplacementMap() {
+  if (_bulgeMapDataUrl) return _bulgeMapDataUrl;
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const imgData = ctx.createImageData(size, size);
+  const cx = (size - 1) / 2, cy = (size - 1) / 2;
+  const maxR = size / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - cx, dy = y - cy;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      const t = Math.min(1, d / maxR);
+      // Outward-pointing unit vector
+      const ux = d > 0.0001 ? dx / d : 0;
+      const uy = d > 0.0001 ? dy / d : 0;
+      // Magnitude: 0 at center, peaks at ~0.6 of radius, 0 at edge — gives
+      // the classic barrel-bulge profile (centre stretches, edges fall back).
+      const mag = Math.sin(t * Math.PI);
+      const i = (y * size + x) * 4;
+      imgData.data[i]     = Math.round(128 + ux * mag * 127);
+      imgData.data[i + 1] = Math.round(128 + uy * mag * 127);
+      imgData.data[i + 2] = 128;
+      imgData.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  _bulgeMapDataUrl = c.toDataURL('image/png');
+  return _bulgeMapDataUrl;
+}
 
 class Pet {
   constructor(spec, stage, handle) {
@@ -746,6 +853,8 @@ class Pet {
     this.depthScale = 1;
     this.stretchX = 1;
     this.stretchY = 1;
+    this.bulgeLevel = 0;
+    this.filterId = (Math.random().toString(36).slice(2, 10));
 
     stage.appendChild(this.el);
     this.applyTransform();
@@ -845,6 +954,66 @@ class Pet {
   setStretchY(mul) {
     this.stretchY = clamp(mul, LIMITS.stretchY);
     this._rebalance('stretchY');
+    this.lastMessage = performance.now();
+    saveStateDebounced();
+  }
+
+  // !reset — restore all per-pet transforms to defaults.
+  resetAll() {
+    this.speedMul = 1;
+    this.depthScale = 1;
+    this.stretchX = 1;
+    this.stretchY = 1;
+    this.el.style.setProperty('--anim-speed', 1);
+    this.setBulgeLevel(0);
+    this.lastMessage = performance.now();
+    this.applyTransform();
+    saveStateDebounced();
+  }
+
+  // Bulge / fisheye: real radial-pinch distortion via feDisplacementMap fed by
+  // a canvas-generated vector field. Stacked with `bulgex3` etc.
+  setBulgeLevel(level) {
+    this.bulgeLevel = clamp(level, LIMITS.bulgeLevel);
+    const filterId = `bulge-${this.filterId}`;
+    const defs = document.querySelector('#filter-defs defs');
+    let filter = document.getElementById(filterId);
+    if (this.bulgeLevel <= 0) {
+      this.flipEl.style.filter = '';
+      if (filter) filter.remove();
+      this.lastMessage = performance.now();
+      saveStateDebounced();
+      return;
+    }
+    const NS = 'http://www.w3.org/2000/svg';
+    if (!filter) {
+      filter = document.createElementNS(NS, 'filter');
+      filter.id = filterId;
+      filter.setAttribute('x', '-30%');
+      filter.setAttribute('y', '-30%');
+      filter.setAttribute('width', '160%');
+      filter.setAttribute('height', '160%');
+      filter.setAttribute('color-interpolation-filters', 'sRGB');
+      const feImage = document.createElementNS(NS, 'feImage');
+      feImage.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', getBulgeDisplacementMap());
+      feImage.setAttribute('href', getBulgeDisplacementMap());
+      feImage.setAttribute('result', 'map');
+      feImage.setAttribute('preserveAspectRatio', 'none');
+      feImage.setAttribute('width', '100%');
+      feImage.setAttribute('height', '100%');
+      filter.appendChild(feImage);
+      const disp = document.createElementNS(NS, 'feDisplacementMap');
+      disp.setAttribute('in', 'SourceGraphic');
+      disp.setAttribute('in2', 'map');
+      disp.setAttribute('xChannelSelector', 'R');
+      disp.setAttribute('yChannelSelector', 'G');
+      filter.appendChild(disp);
+      defs.appendChild(filter);
+    }
+    // Each level = a noticeable but bounded distortion.
+    const disp = filter.querySelector('feDisplacementMap');
+    disp.setAttribute('scale', String(this.bulgeLevel * 14));
+    this.flipEl.style.filter = `url(#${filterId})`;
     this.lastMessage = performance.now();
     saveStateDebounced();
   }
@@ -960,6 +1129,8 @@ class Pet {
   }
 
   dispose() {
+    const f = document.getElementById(`bulge-${this.filterId}`);
+    if (f) f.remove();
     this.el.remove();
   }
 }
@@ -967,7 +1138,9 @@ class Pet {
 /* ---------- Profile resolver: handle + PDS + RPG sprite ---------- */
 
 const profileCache = new Map();   // did -> { handle, pds, sprite }
+const profileFetchedAt = new Map(); // did -> Date.now() when last fetched
 const profilePending = new Map(); // did -> Promise
+const PROFILE_TTL_MS = 60 * 1000;
 
 function loadImage(url) {
   return new Promise((resolve, reject) => {
@@ -985,22 +1158,39 @@ async function fetchSprite(pds, did) {
   const data = await r.json();
   const rec = data?.value;
   const cid = rec?.spriteSheet?.ref?.$link;
-  if (!rec || !cid || !rec.frameWidth || !rec.frameHeight) return null;
+  const fw = Number(rec?.frameWidth);
+  const fh = Number(rec?.frameHeight);
+  if (!rec || !cid || !isFinite(fw) || !isFinite(fh) || fw <= 0 || fh <= 0) return null;
   const imageUrl = `${pds.replace(/\/$/, '')}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${cid}`;
-  await loadImage(imageUrl);
+  let img;
+  try { img = await loadImage(imageUrl); } catch { return null; }
+  const rows = Math.max(1, Number(rec.rows) || 1);
+  const columns = Math.max(1, Number(rec.columns) || 1);
+  // Sanity-check: declared layout must fit inside the actual image. If not
+  // (e.g. wrong frameWidth/frameHeight in the upload), refuse the sprite so the
+  // user gets a visible SVG fallback instead of an invisible/broken pet.
+  if (img.naturalWidth < fw || img.naturalHeight < fh
+      || img.naturalWidth < fw * columns - 1
+      || img.naturalHeight < fh * rows - 1) {
+    console.warn('[pets] sprite layout exceeds image bounds; falling back to SVG', did,
+                 { fw, fh, rows, columns, imgW: img.naturalWidth, imgH: img.naturalHeight });
+    return null;
+  }
   return {
     imageUrl,
-    rows: rec.rows || 1,
-    columns: rec.columns || 1,
-    frameWidth: rec.frameWidth,
-    frameHeight: rec.frameHeight,
-    width: rec.width || (rec.frameWidth * (rec.columns || 1)),
-    height: rec.height || (rec.frameHeight * (rec.rows || 1)),
+    rows,
+    columns,
+    frameWidth: fw,
+    frameHeight: fh,
+    width: Number(rec.width) || (fw * columns),
+    height: Number(rec.height) || (fh * rows),
   };
 }
 
 async function getProfile(did) {
-  if (profileCache.has(did)) return profileCache.get(did);
+  const fetchedAt = profileFetchedAt.get(did) || 0;
+  const fresh = (Date.now() - fetchedAt) < PROFILE_TTL_MS;
+  if (profileCache.has(did) && fresh) return profileCache.get(did);
   if (profilePending.has(did)) return profilePending.get(did);
 
   const promise = (async () => {
@@ -1030,6 +1220,7 @@ async function getProfile(did) {
 
     const profile = { handle, pds, sprite };
     profileCache.set(did, profile);
+    profileFetchedAt.set(did, Date.now());
     return profile;
   })();
 
@@ -1038,9 +1229,14 @@ async function getProfile(did) {
   return promise;
 }
 
+function spriteIdentity(s) {
+  if (!s) return null;
+  return `${s.imageUrl}|${s.rows}x${s.columns}|${s.frameWidth}x${s.frameHeight}`;
+}
+
 /* ---------- Bang-command scene effects ---------- */
 
-const fxState = { party: false, snow: false, rain: false, confetti: false, hearts: false, quake: false };
+const fxState = { party: false, snow: false, rain: false, confetti: false, hearts: false, quake: false, barrelroll: false };
 
 function triggerRain() {
   if (fxState.rain) return;
@@ -1152,6 +1348,126 @@ function triggerQuake() {
   }, 600);
 }
 
+/* !barrelroll — only chatters who have a `place.stream.badge.issuance` record
+   issued by the stream.place account can trigger this. (Per chat clarification:
+   badges live on the central stream.place account, not the streamer's repo.) */
+const BADGE_ISSUER_HANDLE = 'stream.place';
+const badgeCheckCache = new Map(); // chatter DID → boolean
+let _badgedDids = null;            // Promise<Set<string>> | null
+let _badgedDidsAt = 0;
+const BADGE_TTL_MS = 5 * 60 * 1000;
+
+async function resolveHandleToDid(handle) {
+  try {
+    const r = await fetch(
+      `https://slingshot.microcosm.blue/xrpc/blue.microcosm.identity.resolveMiniDoc?identifier=${encodeURIComponent(handle)}`
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.did || null;
+  } catch { return null; }
+}
+
+async function getBadgedDids() {
+  if (_badgedDids && (Date.now() - _badgedDidsAt) < BADGE_TTL_MS) return _badgedDids;
+  const promise = (async () => {
+    let ok = false;
+    const issuerDid = await resolveHandleToDid(BADGE_ISSUER_HANDLE);
+    if (!issuerDid) return { ok, set: new Set() };
+    const profile = await getProfile(issuerDid);
+    const pds = profile?.pds;
+    if (!pds) return { ok, set: new Set() };
+    const out = new Set();
+    let cursor = '';
+    for (let page = 0; page < 5; page++) {
+      const url = `${pds.replace(/\/$/, '')}/xrpc/com.atproto.repo.listRecords`
+        + `?repo=${encodeURIComponent(issuerDid)}`
+        + `&collection=place.stream.badge.issuance&limit=100`
+        + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
+      let data;
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return { ok: false, set: out };
+        data = await r.json();
+        ok = true; // at least one page came through
+      } catch { return { ok: false, set: out }; }
+      for (const rec of (data.records || [])) {
+        // The schema is `{ did: <holder>, badge: { uri, cid }, createdAt }`.
+        // Capture the holder DID; ignore the at:// uri which embeds the issuer DID.
+        if (rec.value && typeof rec.value.did === 'string' && rec.value.did.startsWith('did:')) {
+          out.add(rec.value.did);
+        }
+      }
+      cursor = data.cursor || '';
+      if (!cursor) break;
+    }
+    return { ok, set: out };
+  })();
+  // Tentatively cache the in-flight promise so concurrent callers share work.
+  _badgedDids = promise.then(r => r.set);
+  _badgedDidsAt = Date.now();
+  const { ok, set } = await promise;
+  if (!ok) {
+    // Don't poison the cache on a failed fetch — let the next call retry.
+    _badgedDids = null;
+    _badgedDidsAt = 0;
+  } else {
+    console.log(`[pets] badge issuance records on ${BADGE_ISSUER_HANDLE}: ${set.size} DIDs`);
+  }
+  return set;
+}
+
+async function chatterIsBadged(did) {
+  // The streamer (when filtered via URL param) is always authorized.
+  if (STREAMER_DID && did === STREAMER_DID) return true;
+  if (badgeCheckCache.has(did)) return badgeCheckCache.get(did);
+  const badged = await getBadgedDids();
+  const ok = badged.has(did);
+  // Only cache positive results; negatives may be transient until the badge
+  // listing successfully populates.
+  if (ok) badgeCheckCache.set(did, true);
+  return ok;
+}
+
+async function triggerBarrelRoll(chatterDid) {
+  if (fxState.barrelroll) return;
+  const allowed = await chatterIsBadged(chatterDid);
+  if (!allowed) {
+    console.log('[pets] !barrelroll denied — chatter has no badge', chatterDid);
+    return;
+  }
+  fxState.barrelroll = true;
+  document.body.classList.add('fx-barrelroll');
+  setTimeout(() => {
+    document.body.classList.remove('fx-barrelroll');
+    fxState.barrelroll = false;
+  }, 1450);
+}
+
+// !refresh — hard reload the page (lets the streamer or a badge holder reset
+// the overlay without touching OBS). Badge-gated to prevent griefing.
+async function triggerRefresh(chatterDid) {
+  const allowed = await chatterIsBadged(chatterDid);
+  if (!allowed) {
+    console.log('[pets] !refresh denied — chatter has no badge', chatterDid);
+    return;
+  }
+  saveState();
+  setTimeout(() => location.reload(), 200);
+}
+
+// !clearall — wipe localStorage and reload, dropping every persisted pet,
+// type override and saved transform. Badge-gated.
+async function triggerClearAll(chatterDid) {
+  const allowed = await chatterIsBadged(chatterDid);
+  if (!allowed) {
+    console.log('[pets] !clearall denied — chatter has no badge', chatterDid);
+    return;
+  }
+  try { localStorage.clear(); } catch {}
+  setTimeout(() => location.reload(), 200);
+}
+
 /* ---------- Persistence (so refresh doesn't lose state) ---------- */
 
 const STATE_KEY = 'streampets-state-v1';
@@ -1178,6 +1494,8 @@ function saveState() {
         stretchX: pet.stretchX,
         stretchY: pet.stretchY,
         speedMul: pet.speedMul,
+        bulgeLevel: pet.bulgeLevel,
+        typeOverride: petTypeOverrides.get(did) || null,
         lastMessageWall: wallNow - (nowPerf - pet.lastMessage),
         sprite: pet.mode === 'sprite' ? pet.sprite : null,
       });
@@ -1194,8 +1512,11 @@ function restoreState() {
     if (!data.pets || Date.now() - data.ts > STATE_TTL_MS) return;
     for (const saved of data.pets) {
       if (pets.has(saved.did)) continue;
+      if (saved.typeOverride) petTypeOverrides.set(saved.did, saved.typeOverride);
       let spec;
-      if (saved.sprite) {
+      if (saved.typeOverride) {
+        spec = pickPet(saved.did, saved.handle, null);
+      } else if (saved.sprite) {
         spec = { mode: 'sprite', sprite: saved.sprite, scale: 1.0, speed: 42 };
       } else {
         spec = pickPet(saved.did, saved.handle, null);
@@ -1208,6 +1529,7 @@ function restoreState() {
       pet.stretchY = saved.stretchY || 1;
       pet.speedMul = saved.speedMul || 1;
       pet.el.style.setProperty('--anim-speed', pet.speedMul);
+      if (saved.bulgeLevel) pet.setBulgeLevel(saved.bulgeLevel);
       pet.applyTransform();
       pet.el.classList.remove('spawning');
       pets.set(saved.did, pet);
@@ -1227,6 +1549,7 @@ window.addEventListener('beforeunload', saveState);
 const stage = document.getElementById('stage');
 const statusEl = document.getElementById('status');
 const pets = new Map();
+const commandCooldownUntil = new Map(); // did → performance.now() until which commands are blocked
 const MAX_PETS = 30;
 
 function evictIfNeeded() {
@@ -1247,9 +1570,53 @@ function evictIfNeeded() {
 
 async function handleChatMessage(authorDid, record) {
   const text = String(record.text || '').trim().toLowerCase();
+
+  // `reload` / `refresh` — drop cached profile + pet so a freshly uploaded sprite
+  // re-resolves on the next handler call.
+  if (/^(reload|reloadsprite|reload\s*sprite|refresh|respawn)$/i.test(text)) {
+    profileCache.delete(authorDid);
+    profileFetchedAt.delete(authorDid);
+    badgeCheckCache.delete(authorDid);
+    if (pets.has(authorDid)) {
+      pets.get(authorDid).dispose();
+      pets.delete(authorDid);
+    }
+    console.log('[pets] reloaded', authorDid);
+  }
+
+  // `reload @other-handle` — drop another chatter's profile + pet so their newly
+  // uploaded sprite resolves on their next message. Bounded by 'pets currently
+  // on stage'; griefable but harmless (target reappears with fresh data).
+  const reloadOtherMatch = (record.text || '').match(/^\s*(?:reload|reloadsprite|reload\s*sprite|refresh|respawn)\s+(?:rpg\.actor\s+sprite\s+for\s+)?@?([A-Za-z0-9\.\-_]+)\s*$/i);
+  if (reloadOtherMatch && reloadOtherMatch[1].toLowerCase() !== 'sprite') {
+    const target = reloadOtherMatch[1].toLowerCase();
+    for (const [did, p] of pets) {
+      const h = (p.handle || '').toLowerCase();
+      if (h === target || h.split('.')[0] === target || h.startsWith(target + '.')) {
+        profileCache.delete(did);
+        profileFetchedAt.delete(did);
+        p.dispose();
+        pets.delete(did);
+        console.log('[pets] reloaded target', did, '@' + h);
+        break;
+      }
+    }
+  }
+
   const profile = await getProfile(authorDid);
 
   let pet = pets.get(authorDid);
+  // If the user's sprite identity changed (uploaded a new one, fixed a broken
+  // one, removed it), drop the old pet and rebuild from the new spec.
+  if (pet) {
+    const oldId = pet.mode === 'sprite' ? spriteIdentity(pet.sprite) : null;
+    const newId = spriteIdentity(profile.sprite);
+    if (oldId !== newId) {
+      pet.dispose();
+      pets.delete(authorDid);
+      pet = null;
+    }
+  }
   if (!pet) {
     evictIfNeeded();
     const spec = pickPet(authorDid, profile.handle, profile.sprite);
@@ -1274,10 +1641,102 @@ async function handleChatMessage(authorDid, record) {
     narrower: new Set(['narrow', 'narrower', 'schmal', 'schmaler', 'smal', 'thin', 'dun']),
     taller:   new Set(['tall', 'taller', 'lang', 'länger', 'laenger', 'hoog', 'hoger']),
     shorter:  new Set(['short', 'shorter', 'flach', 'flacher', 'kurz', 'kürzer', 'kort', 'korter', 'laag', 'lager']),
+    bulge:    new Set(['bulge', 'bulgy', 'fisheye', 'fisch', 'bulle', 'bolle', 'bol']),
+    unbulge:  new Set(['unbulge', 'debulge', 'flatten', 'unfish']),
   };
 
   // Temporarily replace the handle pill with the redacted chat message
   pet.showMessage(record.text || '');
+
+  // Pet-type pick: 'cat', 'dog', 'bunny', etc. swap the chatter's pet in place.
+  // 'random' clears the override and falls back to the hash-derived default.
+  // Use word boundaries so casual mentions (`my cat`, `dancing dog`) still match.
+  const TYPE_WORDS = {
+    cat: 'cat', kitty: 'cat', kitten: 'cat', katze: 'cat', kat: 'cat',
+    dog: 'dog', doggo: 'dog', puppy: 'dog', hund: 'dog', hond: 'dog',
+    bunny: 'bunny', rabbit: 'bunny', hase: 'bunny', konijn: 'bunny',
+    duck: 'duck', ente: 'duck', eend: 'duck',
+    hamster: 'hamster',
+    goose: 'goose', gans: 'goose',
+  };
+  let chosenType = null;
+  for (const [word, type] of Object.entries(TYPE_WORDS)) {
+    if (new RegExp(`\\b${word}\\b`, 'i').test(text)) { chosenType = type; break; }
+  }
+  if (/\brandom\b/i.test(text) && !chosenType) {
+    petTypeOverrides.delete(authorDid);
+    chosenType = '__rebuild__';
+  }
+  if (chosenType) {
+    if (chosenType !== '__rebuild__') petTypeOverrides.set(authorDid, chosenType);
+    const oldX = pet.x, oldDir = pet.dir;
+    const oldSpeedMul = pet.speedMul, oldDepthScale = pet.depthScale;
+    const oldStretchX = pet.stretchX, oldStretchY = pet.stretchY;
+    const oldBulge = pet.bulgeLevel;
+    pet.dispose();
+    pets.delete(authorDid);
+    const profileNow = profileCache.get(authorDid) || profile;
+    const spec = pickPet(authorDid, profileNow.handle, profileNow.sprite);
+    pet = new Pet(spec, stage, profileNow.handle);
+    pet.x = oldX; pet.dir = oldDir;
+    pet.speedMul = oldSpeedMul; pet.depthScale = oldDepthScale;
+    pet.stretchX = oldStretchX; pet.stretchY = oldStretchY;
+    pet.el.style.setProperty('--anim-speed', pet.speedMul);
+    if (oldBulge) pet.setBulgeLevel(oldBulge);
+    pet.applyTransform();
+    pets.set(authorDid, pet);
+    saveStateDebounced();
+  }
+
+  // Per-chatter command rate limit — keeps one person from monopolizing the scene.
+  // Plain chat (no command) still pulses the heart, no cooldown.
+  // Recovery commands (!reset, !refresh) bypass the limit so users can always
+  // dig themselves out of an effects pileup.
+  const RECOVERY_CMD_RE = /(!reset|!refresh|!clearall|!factoryreset)\b/i;
+  if (RECOVERY_CMD_RE.test(text)) {
+    if (/!reset\b/i.test(text))   pet.resetAll();
+    if (/!refresh\b/i.test(text)) triggerRefresh(authorDid);
+    if (/!(clearall|factoryreset)\b/i.test(text)) triggerClearAll(authorDid);
+    return;
+  }
+  const ALL_COMMAND_RE = /(!party|!snow|!rain|!confetti|!hearts?|!(?:quake|earthquake|shake)|!shrink(?:ray)?|!grow(?:ray)?|barrel\s*roll)\b/i;
+  const looksLikeCommand = ALL_COMMAND_RE.test(text)
+    || /\b(left|right|up|down|fast|faster|slow|slower|jump|dance|fart|wide|narrow|tall|short|stretch|hop|bulge|bulgy|fisheye|unbulge|flatten|debulge|unfish)/i.test(text)
+    || /\b(links|rechts|hoch|runter|größer|grösser|kleiner|schneller|langsamer|spring|tanz|scheet|scheten|furz|breit|schmal|kurz|lang)/i.test(text)
+    || /\b(omhoog|omlaag|sneller|langzamer|dans|dansen|wijd|smal|hoger|laag|lager|breed)/i.test(text)
+    || /(⬅️|➡️|⬆️|⬇️|🔼|🔽|⏩|⏪|🦘|💃|🕺|💨)/.test(text);
+  const COMMAND_COOLDOWN_MS = 2500;
+  const now = performance.now();
+  if (looksLikeCommand) {
+    const until = commandCooldownUntil.get(authorDid) || 0;
+    if (now < until) {
+      console.log('[pets] rate limited', authorDid, `(${Math.round(until - now)}ms remaining)`);
+      return;
+    }
+    commandCooldownUntil.set(authorDid, now + COMMAND_COOLDOWN_MS);
+  }
+
+  // !shrink @target / !grow @target — affect another chatter's pet by handle.
+  // Looks up the named pet by handle (case-insensitive). Silently no-op if
+  // the target isn't currently on stage.
+  const shrinkRayMatch = text.match(/!(shrink|shrinkray|grow|growray)\s+@?([\w\.\-]+)/i);
+  if (shrinkRayMatch) {
+    const isShrink = /^shrink/i.test(shrinkRayMatch[1]);
+    const target = shrinkRayMatch[2].toLowerCase();
+    let foundPet = null;
+    for (const p of pets.values()) {
+      const h = (p.handle || '').toLowerCase();
+      if (h === target || h.split('.')[0] === target || h.startsWith(target + '.')) {
+        foundPet = p; break;
+      }
+    }
+    if (foundPet) {
+      foundPet.setDepthScale(foundPet.depthScale * (isShrink ? 1 / 1.5 : 1.5));
+      foundPet.pulseHeart && foundPet.pulseHeart();
+    } else {
+      console.log('[pets] !shrink/!grow target not on stage:', target);
+    }
+  }
 
   // Bang commands — scene-wide effects, anyone can trigger
   let bangFired = false;
@@ -1287,6 +1746,7 @@ async function handleChatMessage(authorDid, record) {
   if (/!confetti\b/i.test(text))                 { triggerConfetti(); bangFired = true; }
   if (/!hearts?\b/i.test(text))                  { triggerHearts();   bangFired = true; }
   if (/!(quake|earthquake|shake)\b/i.test(text)) { triggerQuake();    bangFired = true; }
+  if (/\bbarrel\s*roll\b/i.test(text)) { triggerBarrelRoll(authorDid); bangFired = true; }
 
   // Tokenize: split on whitespace, strip ASCII edge-punctuation, leave letters/digits/emoji intact.
   const tokens = text.split(/\s+/).map(t => t.replace(/^[!?.,;:'"()\[\]{}*]+|[!?.,;:'"()\[\]{}*]+$/g, ''));
@@ -1337,6 +1797,8 @@ async function handleChatMessage(authorDid, record) {
   if (counts.narrower) pet.setStretchX(pet.stretchX / Math.pow(1.25, counts.narrower));
   if (counts.taller)   pet.setStretchY(pet.stretchY * Math.pow(1.25, counts.taller));
   if (counts.shorter)  pet.setStretchY(pet.stretchY / Math.pow(1.25, counts.shorter));
+  if (counts.bulge)    pet.setBulgeLevel(pet.bulgeLevel + counts.bulge);
+  if (counts.unbulge)  pet.setBulgeLevel(0);
 
   // Catch-all: substring "fart" inside a sentence still fires once if no fart token matched.
   if (!counts.fart && (/\bfart/i.test(text) || text.includes('💨'))) {
@@ -1361,6 +1823,7 @@ const LIMITS = SAFE_LIMITS ? {
   depthScale: [0.3,   2.2],
   stretchX:   [0.4,   3.5],
   stretchY:   [0.4,   3.5],
+  bulgeLevel: [0,     8],
   xN: 10,
   jumpQueue: 5,
   fartQueue: 5,
@@ -1369,6 +1832,7 @@ const LIMITS = SAFE_LIMITS ? {
   depthScale: [0.005, 80],
   stretchX:   [0.005, 80],
   stretchY:   [0.005, 80],
+  bulgeLevel: [0,     30],
   xN: 100,
   jumpQueue: 50,
   fartQueue: 50,
@@ -1430,6 +1894,20 @@ function scheduleReconnect() {
   backoff = Math.min(backoff * 1.5, 15000);
 }
 
+// Build version: bumped each commit so chat can see new code arrived.
+const BUILD_VERSION = 'v0.8.0';
+const BUILD_DATE = '2026-04-30';
+document.getElementById('version').textContent = `pets ${BUILD_VERSION} · ${BUILD_DATE}`;
+
+// "Reloaded" toast — pops up briefly when the page (re)loads.
+{
+  const toast = document.createElement('div');
+  toast.id = 'reload-toast';
+  toast.textContent = `pets reloaded · ${BUILD_VERSION}`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}
+
 restoreState();
 connectJetstream();
 
@@ -1454,11 +1932,39 @@ if (DEMO) {
 
 /* ---------- Main loop ---------- */
 
+// Idle pets fade out (Thanos-snap style) and dispose so the stage stays clean.
+const IDLE_FADE_START_MS = 4 * 60 * 1000;       // 4:00 → start fizzling softly
+const IDLE_DEATH_MS      = 5 * 60 * 1000;       // 5:00 → fully gone, disposed
+
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  for (const p of pets.values()) p.tick(dt);
+  const dead = [];
+  for (const [did, p] of pets) {
+    p.tick(dt);
+    const idle = now - p.lastMessage;
+    if (idle >= IDLE_DEATH_MS) {
+      dead.push(did);
+      continue;
+    }
+    if (idle >= IDLE_FADE_START_MS) {
+      const t = (idle - IDLE_FADE_START_MS) / (IDLE_DEATH_MS - IDLE_FADE_START_MS); // 0..1
+      // Opacity fades smoothly, dissolve filter ramps up in the second half.
+      p.el.style.opacity = String(Math.max(0, 1 - t * t));
+      p.el.style.filter = t > 0.4
+        ? (t > 0.75 ? 'url(#dissolve)' : 'url(#dissolve-soft)')
+        : '';
+    } else if (p._wasFading) {
+      p.el.style.opacity = '';
+      p.el.style.filter = '';
+    }
+    p._wasFading = idle >= IDLE_FADE_START_MS;
+  }
+  for (const did of dead) {
+    pets.get(did).dispose();
+    pets.delete(did);
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
