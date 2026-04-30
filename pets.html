@@ -768,10 +768,14 @@ function getBulgeDisplacementMap() {
       const uy = d > 0.0001 ? dy / d : 0;
       // Magnitude: 0 at center, peaks at ~0.6 of radius, 0 at edge — gives
       // the classic barrel-bulge profile (centre stretches, edges fall back).
+      // Vectors point INWARD (toward center): a slightly-off-center output
+      // pixel samples from a point even closer to centre, so the centre
+      // appears magnified — a true bulge / convex lens. (An outward-pointing
+      // map gives the opposite, pinch-style distortion.)
       const mag = Math.sin(t * Math.PI);
       const i = (y * size + x) * 4;
-      imgData.data[i]     = Math.round(128 + ux * mag * 127);
-      imgData.data[i + 1] = Math.round(128 + uy * mag * 127);
+      imgData.data[i]     = Math.round(128 - ux * mag * 127);
+      imgData.data[i + 1] = Math.round(128 - uy * mag * 127);
       imgData.data[i + 2] = 128;
       imgData.data[i + 3] = 255;
     }
