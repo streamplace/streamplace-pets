@@ -127,11 +127,19 @@
     backdrop-filter: blur(2px);
     transition: background-color 0.18s, color 0.18s;
   }
+  /* Per chat: speech bubbles square-ish + Comic Sans. Only when chatting,
+     so the @handle pill stays the small system-font pill. */
   .pet-label.chatting {
     background: rgba(255,255,255,0.96);
     color: #1a1a1a;
     text-shadow: none;
-    font-weight: 500;
+    font-weight: 600;
+    font-family: "Comic Sans MS", "Comic Sans", "Chalkboard SE",
+                 "Marker Felt", system-ui, sans-serif;
+    border-radius: 6px;
+    padding: 3px 8px;
+    border: 2px solid #1a1a1a;
+    box-shadow: 2px 2px 0 #1a1a1a;
   }
 
   /* Walk bob — only for SVG pets */
