@@ -1847,7 +1847,8 @@ async function handleChatMessage(authorDid, record) {
     counts.fart = 1;
   }
 
-  if (Object.keys(counts).length === 0 && !bangFired) pet.pulseHeart();
+  // (No more pulseHeart on plain chat — the message bubble now carries the
+  // "I said something" signal and the heart was visual noise.)
 }
 
 /* ---------- Jetstream ---------- */
