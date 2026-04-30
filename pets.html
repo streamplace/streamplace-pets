@@ -1553,6 +1553,39 @@ async function triggerClearAll(chatterDid) {
   setTimeout(() => location.reload(), 200);
 }
 
+// !hardreset — streamer-only nuclear option: clear everything JS can reach
+// (localStorage, sessionStorage, the Cache API, IndexedDB databases) and
+// hard-reload. Useful when a stale cached HTML build is stuck in OBS.
+async function triggerHardReset(chatterDid) {
+  if (!STREAMER_DID || chatterDid !== STREAMER_DID) {
+    console.log('[pets] !hardreset denied — only the streamer can run this', chatterDid);
+    return;
+  }
+  try { localStorage.clear(); } catch {}
+  try { sessionStorage.clear(); } catch {}
+  try {
+    if (window.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  } catch {}
+  try {
+    if (indexedDB.databases) {
+      const dbs = await indexedDB.databases();
+      await Promise.all(dbs.map(d => d.name && new Promise(res => {
+        const req = indexedDB.deleteDatabase(d.name);
+        req.onsuccess = req.onerror = req.onblocked = () => res();
+      })));
+    }
+  } catch {}
+  // Cache-bust query param so the HTML itself isn't served from disk cache.
+  setTimeout(() => {
+    const u = new URL(location.href);
+    u.searchParams.set('_t', String(Date.now()));
+    location.replace(u.toString());
+  }, 250);
+}
+
 /* ---------- Persistence (so refresh doesn't lose state) ---------- */
 
 const STATE_KEY = 'streampets-state-v1';
@@ -1787,11 +1820,12 @@ async function handleChatMessage(authorDid, record) {
   // Plain chat (no command) still pulses the heart, no cooldown.
   // Recovery commands (!reset, !refresh) bypass the limit so users can always
   // dig themselves out of an effects pileup.
-  const RECOVERY_CMD_RE = /(!reset|!refresh|!clearall|!factoryreset)\b/i;
+  const RECOVERY_CMD_RE = /(!reset|!refresh|!clearall|!factoryreset|!hardreset)\b/i;
   if (RECOVERY_CMD_RE.test(text)) {
     if (/!reset\b/i.test(text))   pet.resetAll();
     if (/!refresh\b/i.test(text)) triggerRefresh(authorDid);
     if (/!(clearall|factoryreset)\b/i.test(text)) triggerClearAll(authorDid);
+    if (/!hardreset\b/i.test(text)) triggerHardReset(authorDid);
     return;
   }
   const ALL_COMMAND_RE = /(!party|!snow|!rain|!confetti|!hearts?|!(?:quake|earthquake|shake)|!shrink(?:ray)?|!grow(?:ray)?|!pet\b|barrel\s*roll)\b/i;
