@@ -245,6 +245,29 @@
     100% { transform: translate(-50%, -44px) scale(0.85); opacity: 0; }
   }
 
+  /* !pet @user — a cartoon hand bobs above the target's head, rubbing it. */
+  .pet-rub {
+    position: absolute;
+    top: -22px; left: 50%;
+    width: 36px; height: 36px;
+    margin-left: -18px;
+    pointer-events: none;
+    opacity: 0;
+    will-change: transform;
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45));
+  }
+  .pet.petted .pet-rub { animation: pet-rub 1.8s ease-in-out forwards; }
+  @keyframes pet-rub {
+    0%   { opacity: 0; transform: translateY(8px) rotate(-12deg); }
+    10%  { opacity: 1; transform: translateY(2px) rotate(-12deg); }
+    25%  { transform: translateY(-4px) rotate(8deg); }
+    40%  { transform: translateY(2px) rotate(-12deg); }
+    55%  { transform: translateY(-4px) rotate(8deg); }
+    70%  { transform: translateY(2px) rotate(-12deg); }
+    85%  { transform: translateY(-4px) rotate(8deg); opacity: 1; }
+    100% { transform: translateY(-12px) rotate(0deg); opacity: 0; }
+  }
+
   .pet.spawning { animation: spawn-in 0.6s ease-out; }
   @keyframes spawn-in {
     0%   { opacity: 0; }
@@ -655,6 +678,19 @@ const HEART_SVG = `
           fill="#ff5577" stroke="#fff" stroke-width="1.5"/>
   </svg>
 `;
+// Cartoon hand for !pet — palm-down so it reads as patting a head from above.
+const HAND_SVG = `
+  <svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
+    <g stroke="#3a2418" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
+      <rect x="11" y="22" width="14" height="9" rx="3" fill="#f4c393"/>
+      <path d="M9 22 Q 8 14 12 12 Q 14 12 14 16 L 14 23 Z" fill="#f4c393"/>
+      <path d="M13 22 Q 12 9  16 8  Q 19 8  18.5 13 L 18.5 23 Z" fill="#f4c393"/>
+      <path d="M17 22 Q 16 7  21 6.5 Q 24 7  23 13 L 23 23 Z" fill="#f4c393"/>
+      <path d="M21 22 Q 21 10 25.5 10 Q 28 10 27 16 L 27 23 Z" fill="#f4c393"/>
+      <path d="M25 24 Q 30 22 31 26 Q 30 29 25 28 Z" fill="#f4c393"/>
+    </g>
+  </svg>
+`;
 const FART_GREENS = ['#9bbf2f', '#aacc3a', '#b8d650', '#8eb02a', '#7ea020', '#c4dc66', '#a3c544', '#88a52a', '#d4e878'];
 
 function randomFartSvg() {
@@ -838,6 +874,10 @@ class Pet {
     this.fartEl = document.createElement('div');
     this.fartEl.className = 'fart';
 
+    this.rubEl = document.createElement('div');
+    this.rubEl.className = 'pet-rub';
+    this.rubEl.innerHTML = HAND_SVG;
+
     this.labelEl = document.createElement('div');
     this.labelEl.className = 'pet-label';
 
@@ -845,6 +885,7 @@ class Pet {
     this.el.appendChild(this.zzzEl);
     this.el.appendChild(this.heartEl);
     this.el.appendChild(this.fartEl);
+    this.el.appendChild(this.rubEl);
     this.el.appendChild(this.labelEl);
 
     this.setHandle(handle);
@@ -1106,6 +1147,16 @@ class Pet {
       this.labelEl.classList.remove('chatting');
       this.labelEl.textContent = this.handle ? '@' + this.handle : '';
     }, 4500);
+  }
+
+  // !pet @target — show a cartoon hand patting the pet for ~1.8s, plus a heart.
+  petPat() {
+    this.el.classList.remove('petted');
+    void this.el.offsetWidth;
+    this.el.classList.add('petted');
+    this.pulseHeart();
+    setTimeout(() => this.el.classList.remove('petted'), 1900);
+    this.lastMessage = performance.now();
   }
 
   pulseHeart() {
@@ -1735,7 +1786,7 @@ async function handleChatMessage(authorDid, record) {
     if (/!(clearall|factoryreset)\b/i.test(text)) triggerClearAll(authorDid);
     return;
   }
-  const ALL_COMMAND_RE = /(!party|!snow|!rain|!confetti|!hearts?|!(?:quake|earthquake|shake)|!shrink(?:ray)?|!grow(?:ray)?|barrel\s*roll)\b/i;
+  const ALL_COMMAND_RE = /(!party|!snow|!rain|!confetti|!hearts?|!(?:quake|earthquake|shake)|!shrink(?:ray)?|!grow(?:ray)?|!pet\b|barrel\s*roll)\b/i;
   const looksLikeCommand = ALL_COMMAND_RE.test(text)
     || /\b(left|right|up|down|fast|faster|slow|slower|jump|dance|fart|wide|narrow|tall|short|stretch|hop|bulge|bulgy|fisheye|unbulge|flatten|debulge|unfish|blur|unblur)/i.test(text)
     || /\b(links|rechts|hoch|runter|größer|grösser|kleiner|schneller|langsamer|spring|tanz|scheet|scheten|furz|breit|schmal|kurz|lang)/i.test(text)
@@ -1750,6 +1801,19 @@ async function handleChatMessage(authorDid, record) {
       return;
     }
     commandCooldownUntil.set(authorDid, now + COMMAND_COOLDOWN_MS);
+  }
+
+  // !pet @target — friendly pat on the head, no badge required.
+  const petMatch = text.match(/!pet\s+@?([\w\.\-]+)/i);
+  if (petMatch) {
+    const target = petMatch[1].toLowerCase();
+    for (const p of pets.values()) {
+      const h = (p.handle || '').toLowerCase();
+      if (h === target || h.split('.')[0] === target || h.startsWith(target + '.')) {
+        p.petPat();
+        break;
+      }
+    }
   }
 
   // !shrink @target / !grow @target — affect another chatter's pet by handle.
