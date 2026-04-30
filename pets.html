@@ -128,7 +128,8 @@
     transition: background-color 0.18s, color 0.18s;
   }
   /* Per chat: speech bubbles square-ish + Comic Sans. Only when chatting,
-     so the @handle pill stays the small system-font pill. */
+     so the @handle pill stays the small system-font pill.
+     Wraps up to 3 lines (per streamer follow-up) using -webkit-line-clamp. */
   .pet-label.chatting {
     background: rgba(255,255,255,0.96);
     color: #1a1a1a;
@@ -140,6 +141,15 @@
     padding: 3px 8px;
     border: 2px solid #1a1a1a;
     box-shadow: 2px 2px 0 #1a1a1a;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.25;
+    max-width: 280px;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
   }
 
   /* Walk bob — only for SVG pets */
