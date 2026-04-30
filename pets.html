@@ -1613,21 +1613,25 @@ async function handleChatMessage(authorDid, record) {
   }
 
   // `reload @other-handle` — drop another chatter's profile + pet so their newly
-  // uploaded sprite resolves on their next message. Bounded by 'pets currently
-  // on stage'; griefable but harmless (target reappears with fresh data).
+  // uploaded sprite resolves on their next message. Mod-only (badge-gated) per
+  // streamer feedback: actions that affect a different user need permission.
   const reloadOtherMatch = (record.text || '').match(/^\s*(?:reload|reloadsprite|reload\s*sprite|refresh|respawn)\s+(?:rpg\.actor\s+sprite\s+for\s+)?@?([A-Za-z0-9\.\-_]+)\s*$/i);
   if (reloadOtherMatch && reloadOtherMatch[1].toLowerCase() !== 'sprite') {
-    const target = reloadOtherMatch[1].toLowerCase();
-    for (const [did, p] of pets) {
-      const h = (p.handle || '').toLowerCase();
-      if (h === target || h.split('.')[0] === target || h.startsWith(target + '.')) {
-        profileCache.delete(did);
-        profileFetchedAt.delete(did);
-        p.dispose();
-        pets.delete(did);
-        console.log('[pets] reloaded target', did, '@' + h);
-        break;
+    if (await chatterIsBadged(authorDid)) {
+      const target = reloadOtherMatch[1].toLowerCase();
+      for (const [did, p] of pets) {
+        const h = (p.handle || '').toLowerCase();
+        if (h === target || h.split('.')[0] === target || h.startsWith(target + '.')) {
+          profileCache.delete(did);
+          profileFetchedAt.delete(did);
+          p.dispose();
+          pets.delete(did);
+          console.log('[pets] reloaded target', did, '@' + h);
+          break;
+        }
       }
+    } else {
+      console.log('[pets] reload @target denied — chatter has no badge', authorDid);
     }
   }
 
@@ -1749,24 +1753,27 @@ async function handleChatMessage(authorDid, record) {
   }
 
   // !shrink @target / !grow @target — affect another chatter's pet by handle.
-  // Looks up the named pet by handle (case-insensitive). Silently no-op if
-  // the target isn't currently on stage.
+  // Mod-only (badge-gated) per streamer: cross-user commands need mod perms.
   const shrinkRayMatch = text.match(/!(shrink|shrinkray|grow|growray)\s+@?([\w\.\-]+)/i);
   if (shrinkRayMatch) {
-    const isShrink = /^shrink/i.test(shrinkRayMatch[1]);
-    const target = shrinkRayMatch[2].toLowerCase();
-    let foundPet = null;
-    for (const p of pets.values()) {
-      const h = (p.handle || '').toLowerCase();
-      if (h === target || h.split('.')[0] === target || h.startsWith(target + '.')) {
-        foundPet = p; break;
+    if (await chatterIsBadged(authorDid)) {
+      const isShrink = /^shrink/i.test(shrinkRayMatch[1]);
+      const target = shrinkRayMatch[2].toLowerCase();
+      let foundPet = null;
+      for (const p of pets.values()) {
+        const h = (p.handle || '').toLowerCase();
+        if (h === target || h.split('.')[0] === target || h.startsWith(target + '.')) {
+          foundPet = p; break;
+        }
       }
-    }
-    if (foundPet) {
-      foundPet.setDepthScale(foundPet.depthScale * (isShrink ? 1 / 1.5 : 1.5));
-      foundPet.pulseHeart && foundPet.pulseHeart();
+      if (foundPet) {
+        foundPet.setDepthScale(foundPet.depthScale * (isShrink ? 1 / 1.5 : 1.5));
+        foundPet.pulseHeart && foundPet.pulseHeart();
+      } else {
+        console.log('[pets] !shrink/!grow target not on stage:', target);
+      }
     } else {
-      console.log('[pets] !shrink/!grow target not on stage:', target);
+      console.log('[pets] !shrink/!grow denied — chatter has no badge', authorDid);
     }
   }
 
