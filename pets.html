@@ -1784,9 +1784,10 @@ async function handleChatMessage(authorDid, record) {
   // Temporarily replace the handle pill with the redacted chat message
   pet.showMessage(record.text || '');
 
-  // Pet-type pick: 'cat', 'dog', 'bunny', etc. swap the chatter's pet in place.
-  // 'random' clears the override and falls back to the hash-derived default.
-  // Use word boundaries so casual mentions (`my cat`, `dancing dog`) still match.
+  // Pet-type pick: must be the *whole* message (optionally with a leading !).
+  // Casual mentions ("did you turn me into a duck") used to trigger this and
+  // accidentally morph the speaker — that was a footgun, hence the strict match.
+  // 'random' (also whole-message-only) clears the override.
   const TYPE_WORDS = {
     cat: 'cat', kitty: 'cat', kitten: 'cat', katze: 'cat', kat: 'cat',
     dog: 'dog', doggo: 'dog', puppy: 'dog', hund: 'dog', hond: 'dog',
@@ -1795,13 +1796,15 @@ async function handleChatMessage(authorDid, record) {
     hamster: 'hamster',
     goose: 'goose', gans: 'goose',
   };
+  const typeMatch = text.match(/^\s*!?([a-zäöü]+)\s*$/i);
   let chosenType = null;
-  for (const [word, type] of Object.entries(TYPE_WORDS)) {
-    if (new RegExp(`\\b${word}\\b`, 'i').test(text)) { chosenType = type; break; }
-  }
-  if (/\brandom\b/i.test(text) && !chosenType) {
-    petTypeOverrides.delete(authorDid);
-    chosenType = '__rebuild__';
+  if (typeMatch) {
+    const w = typeMatch[1].toLowerCase();
+    if (TYPE_WORDS[w]) chosenType = TYPE_WORDS[w];
+    else if (w === 'random') {
+      petTypeOverrides.delete(authorDid);
+      chosenType = '__rebuild__';
+    }
   }
   if (chosenType) {
     if (chosenType !== '__rebuild__') petTypeOverrides.set(authorDid, chosenType);
